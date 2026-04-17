@@ -31,7 +31,18 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef struct{
+  uint16_t buffer_IR[50];
+  uint16_t buffer_LED[50];
+  uint8_t index;
+  uint8_t buffer_full;
 
+  float bpm;
+  float spo2;
+
+  uint32_t samples_between_readings;
+
+} Player;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -47,17 +58,89 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
+//Indica que a leitura do sensor está pronta
+volatile uint8_t ready_to_read = 0;
+uint8_t TIME_BETWEEN_READINGS = 10; //em ms
+Player player1;
+Player player2;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
-
+void Select_I2C_Channel(uint8_t channel);
+void MAX30100_Write(uint8_t reg, uint8_t data);
+void MAX30100_Read();
+void add_reading(Player *player);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+// Função para selecionar canal I2C do multiplexador I2C
+void Select_I2C_Channel(uint8_t channel){
+  uint8_t data = 1 << channel;
+  HAL_I2C_Master_Transmit(&hi2c1, (0x70 << 1), &data, 1, 100);
+}
+
+// Função para escrever nos registradores do sensor MAX30100
+void MAX30100_Write(uint8_t reg, uint8_t data){
+  HAL_I2C_Mem_Write(&hi2c1, (0x57 << 1), reg, I2C_MEMADD_SIZE_8BIT, &data, 1, 100);
+}
+
+void MAX30100_Read(){
+  HAL_I2C_Mem_Read(&hi2c1, (0x57 << 1), 0x05, I2C_MEMADD_SIZE_8BIT, buffer, 4, 100);
+  uint16_t ir_value = (buffer[0] << 8) | buffer[1];
+  uint16_t led_value = (buffer[2] << 8) | buffer[3];
+  //Falta processar o valor do sensor
+}
+
+void prototype_read_BPM(){
+  //Lê valor do IR diretamente do registrador 0x05
+  HAL_I2C_Mem_Read(&hi2c1, (0x57 << 1), 0x05, I2C_MEMADD_SIZE_8BIT, buffer, 4, 100);
+  uint16_t ir_value = (buffer[0] << 8) | buffer[1];
+  Player1->buffer_ir[Player1->index] = ir_value;
+  
+  //Somente para simplificar o processo de verificação de variação
+  uint8_t past_value;
+  uint8_t present_value;
+  uint8_t next_value;
+  if(Player1->index == 0){
+    past_value = Player1->buffer_ir[48];
+    present_value = Player1->buffer_ir[49];
+    next_value = Player1->buffer_ir[0];
+  } else if(Player1->index == 1){
+    past_value = Player1->buffer_ir[49];
+    present_value = Player1->buffer_ir[0];
+    next_value = Player1->buffer_ir[1];
+  } else{
+    uint8_t index = Player1->index;
+    past_value = Player1->buffer_ir[index-2];
+    present_value = Player1->buffer_ir[index-1];
+    next_value = Player1->buffer_ir[index];
+  }
+
+  uint8_t average = 0;
+
+  //Quando o valor tem um ponto de inversão, é considerado um pulso
+  if(past_value > present_value && present_value < next_value)
+  //Calcula média e verifica se é menor
+    for(int i - 0; i < 49; i++){
+          average += player1->buffer_ir[i];
+    }
+    average = average / 50;
+    if(present_value < average){
+      player1->bpm = 60000/(player1->samples_between_readings * TIME_BETWEEN_READINGS);
+      player1->samples_between_readings = 0;
+  }
+  player1->samples_between_readings++;
+}
+
+//Verifica a cada 10ms se a leitura está pronta
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+    if (htim->Instance == TIM6) {
+        ready_to_read = 1;
+    }
+}
 
 /* USER CODE END 0 */
 
@@ -96,6 +179,8 @@ int main(void)
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
 
+  HAL_TIM_Base_Start_IT(&htim6);
+
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -103,7 +188,10 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-
+    if(ready_to_read == 1){
+      prototype_read_BPM();
+      ready_to_read = 0;
+    }
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
