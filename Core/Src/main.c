@@ -98,25 +98,25 @@ void prototype_read_BPM(){
   //Lê valor do IR diretamente do registrador 0x05
   HAL_I2C_Mem_Read(&hi2c1, (0x57 << 1), 0x05, I2C_MEMADD_SIZE_8BIT, buffer, 4, 100);
   uint16_t ir_value = (buffer[0] << 8) | buffer[1];
-  Player1->buffer_ir[Player1->index] = ir_value;
+  player1->buffer_ir[player1->index] = ir_value;
   
   //Somente para simplificar o processo de verificação de variação
   uint8_t past_value;
   uint8_t present_value;
   uint8_t next_value;
-  if(Player1->index == 0){
-    past_value = Player1->buffer_ir[48];
-    present_value = Player1->buffer_ir[49];
-    next_value = Player1->buffer_ir[0];
-  } else if(Player1->index == 1){
-    past_value = Player1->buffer_ir[49];
-    present_value = Player1->buffer_ir[0];
-    next_value = Player1->buffer_ir[1];
+  if(player1->index == 0){
+    past_value = player1->buffer_ir[48];
+    present_value = player1->buffer_ir[49];
+    next_value = player1->buffer_ir[0];
+  } else if(player1->index == 1){
+    past_value = player1->buffer_ir[49];
+    present_value = player1->buffer_ir[0];
+    next_value = player1->buffer_ir[1];
   } else{
-    uint8_t index = Player1->index;
-    past_value = Player1->buffer_ir[index-2];
-    present_value = Player1->buffer_ir[index-1];
-    next_value = Player1->buffer_ir[index];
+    uint8_t index = player1->index;
+    past_value = player1->buffer_ir[index-2];
+    present_value = player1->buffer_ir[index-1];
+    next_value = player1->buffer_ir[index];
   }
 
   uint8_t average = 0;
@@ -188,10 +188,7 @@ int main(void)
   while (1)
   {
     /* USER CODE END WHILE */
-    if(ready_to_read == 1){
-      prototype_read_BPM();
-      ready_to_read = 0;
-    }
+
     /* USER CODE BEGIN 3 */
   }
   /* USER CODE END 3 */
