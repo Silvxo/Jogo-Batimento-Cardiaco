@@ -20,9 +20,11 @@
 #include "main.h"
 #include "i2c.h"
 #include "spi.h"
+#include "stm32f334x8.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
+#include "stdio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -43,6 +45,14 @@ typedef struct{
   uint32_t samples_between_readings;
 
 } Player;
+
+union myConfigMAX30100 {
+  uint8_t reg;
+
+  struct {
+    uint8_t 
+  }
+};
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -76,6 +86,9 @@ void add_reading(Player *player);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+uint8_t tx_buffer[100];
+
 // Função para selecionar canal I2C do multiplexador I2C
 void Select_I2C_Channel(uint8_t channel){
   uint8_t data = 1 << channel;
@@ -87,57 +100,66 @@ void MAX30100_Write(uint8_t reg, uint8_t data){
   HAL_I2C_Mem_Write(&hi2c1, (0x57 << 1), reg, I2C_MEMADD_SIZE_8BIT, &data, 1, 100);
 }
 
+void MAX30100_Init(){
+  MAX30100_Write(0x06, 0b01001011);
+  MAX30100_Write(0x09, 0b01110111);
+  MAX30100_Write(0x07, 0b01000111);
+}
+
 void MAX30100_Read(){
+  uint8_t buffer[4];
   HAL_I2C_Mem_Read(&hi2c1, (0x57 << 1), 0x05, I2C_MEMADD_SIZE_8BIT, buffer, 4, 100);
-  uint16_t ir_value = (buffer[0] << 8) | buffer[1];
-  uint16_t led_value = (buffer[2] << 8) | buffer[3];
+  // uint16_t ir_value = (buffer[0] << 8) | buffer[1];
+  // uint16_t led_value = (buffer[2] << 8) | buffer[3];
   //Falta processar o valor do sensor
 }
 
 void prototype_read_BPM(){
+  uint8_t buffer[4];
   //Lê valor do IR diretamente do registrador 0x05
   HAL_I2C_Mem_Read(&hi2c1, (0x57 << 1), 0x05, I2C_MEMADD_SIZE_8BIT, buffer, 4, 100);
   uint16_t ir_value = (buffer[0] << 8) | buffer[1];
-  player1->buffer_ir[player1->index] = ir_value;
+  player1.buffer_IR[player1.index] = ir_value;
   
   //Somente para simplificar o processo de verificação de variação
   uint8_t past_value;
   uint8_t present_value;
   uint8_t next_value;
-  if(player1->index == 0){
-    past_value = player1->buffer_ir[48];
-    present_value = player1->buffer_ir[49];
-    next_value = player1->buffer_ir[0];
-  } else if(player1->index == 1){
-    past_value = player1->buffer_ir[49];
-    present_value = player1->buffer_ir[0];
-    next_value = player1->buffer_ir[1];
+  if(player1.index == 0){
+    past_value = player1.buffer_IR[48];
+    present_value = player1.buffer_IR[49];
+    next_value = player1.buffer_IR[0];
+  } else if(player1.index == 1){
+    past_value = player1.buffer_IR[49];
+    present_value = player1.buffer_IR[0];
+    next_value = player1.buffer_IR[1];
   } else{
-    uint8_t index = player1->index;
-    past_value = player1->buffer_ir[index-2];
-    present_value = player1->buffer_ir[index-1];
-    next_value = player1->buffer_ir[index];
+    uint8_t index = player1.index;
+    past_value = player1.buffer_IR[index-2];
+    present_value = player1.buffer_IR[index-1];
+    next_value = player1.buffer_IR[index];
   }
 
   uint8_t average = 0;
 
   //Quando o valor tem um ponto de inversão, é considerado um pulso
-  if(past_value > present_value && present_value < next_value)
+  if(past_value > present_value && present_value < next_value){
   //Calcula média e verifica se é menor
-    for(int i - 0; i < 49; i++){
-          average += player1->buffer_ir[i];
+    for(uint8_t i = 0; i < 49; i++){
+          average += player1.buffer_IR[i];
     }
     average = average / 50;
     if(present_value < average){
-      player1->bpm = 60000/(player1->samples_between_readings * TIME_BETWEEN_READINGS);
-      player1->samples_between_readings = 0;
+      player1.bpm = 60000/(player1.samples_between_readings * TIME_BETWEEN_READINGS);
+      player1.samples_between_readings = 0;
+    }
   }
-  player1->samples_between_readings++;
+  player1.samples_between_readings++;
 }
 
 //Verifica a cada 10ms se a leitura está pronta
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
-    if (htim->Instance == TIM6) {
+    if (htim->Instance == TIM1) {
         ready_to_read = 1;
     }
 }
@@ -179,7 +201,10 @@ int main(void)
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
 
-  HAL_TIM_Base_Start_IT(&htim6);
+  HAL_TIM_Base_Start_IT(&htim1);
+
+  //Select_I2C_Channel(0);
+  MAX30100_Init();
 
   /* USER CODE END 2 */
 
@@ -187,6 +212,14 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    int len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "BPM:%d\n", player1.bpm);
+
+    if(ready_to_read == 1){
+      prototype_read_BPM();
+      ready_to_read = 0;
+      HAL_UART_Transmit(&huart2, tx_buffer, len, HAL_MAX_DELAY);
+      
+    }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
