@@ -20,15 +20,13 @@
 #include "main.h"
 #include "i2c.h"
 #include "spi.h"
-#include "stm32f334x8.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
-#include "stdio.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "stdio.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -50,8 +48,8 @@ union myConfigMAX30100 {
   uint8_t reg;
 
   struct {
-    uint8_t 
-  }
+    uint8_t reserved : 8;
+  };
 };
 /* USER CODE END PTD */
 
@@ -79,7 +77,7 @@ Player player2;
 void SystemClock_Config(void);
 /* USER CODE BEGIN PFP */
 void Select_I2C_Channel(uint8_t channel);
-void MAX30100_Write(uint8_t reg, uint8_t data);
+HAL_StatusTypeDef MAX30100_Write(uint8_t reg, uint8_t data);
 void MAX30100_Read();
 void add_reading(Player *player);
 /* USER CODE END PFP */
@@ -96,14 +94,15 @@ void Select_I2C_Channel(uint8_t channel){
 }
 
 // Função para escrever nos registradores do sensor MAX30100
-void MAX30100_Write(uint8_t reg, uint8_t data){
-  HAL_I2C_Mem_Write(&hi2c1, (0x57 << 1), reg, I2C_MEMADD_SIZE_8BIT, &data, 1, 100);
+HAL_StatusTypeDef MAX30100_Write(uint8_t reg, uint8_t data){
+  return HAL_I2C_Mem_Write(&hi2c1, (0x57 << 1), reg, I2C_MEMADD_SIZE_8BIT, &data, 1, 100);
 }
 
 void MAX30100_Init(){
-  MAX30100_Write(0x06, 0b01001011);
-  MAX30100_Write(0x09, 0b01110111);
-  MAX30100_Write(0x07, 0b01000111);
+  //if(MAX30100_Write(0x06, 0b01001011) != HAL_OK) return;
+  if(MAX30100_Write(0x06, 0x02) != HAL_OK) return;
+  if(MAX30100_Write(0x09, 0x77) != HAL_OK) return;
+  if(MAX30100_Write(0x07, 0x01) != HAL_OK) return;
 }
 
 void MAX30100_Read(){
@@ -117,9 +116,23 @@ void MAX30100_Read(){
 void prototype_read_BPM(){
   uint8_t buffer[4];
   //Lê valor do IR diretamente do registrador 0x05
-  HAL_I2C_Mem_Read(&hi2c1, (0x57 << 1), 0x05, I2C_MEMADD_SIZE_8BIT, buffer, 4, 100);
+  HAL_StatusTypeDef status = HAL_I2C_Mem_Read(&hi2c1, (0x57 << 1), 0x05, I2C_MEMADD_SIZE_8BIT, buffer, 4, 100);
+  
+  if(status != HAL_OK) {
+    int len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "ERRO AO LER\n");
+    HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); // Timeout de 1 segundo em vez de infinito
+
+    return; // Se falhar na leitura, sai da função
+  }
+  // int len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "LEU \n");
+  // HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); // Timeout de 1 segundo em vez de infinito
+
+  
   uint16_t ir_value = (buffer[0] << 8) | buffer[1];
   player1.buffer_IR[player1.index] = ir_value;
+  // len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "VALOR: %d \n", ir_value);
+  // HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); // Timeout de 1 segundo em vez de infinito
+
   
   //Somente para simplificar o processo de verificação de variação
   uint8_t past_value;
@@ -150,11 +163,23 @@ void prototype_read_BPM(){
     }
     average = average / 50;
     if(present_value < average){
-      player1.bpm = 60000/(player1.samples_between_readings * TIME_BETWEEN_READINGS);
+      if(player1.samples_between_readings > 0) {
+        player1.bpm = 60000/(player1.samples_between_readings * TIME_BETWEEN_READINGS);
+        int len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "VALOR: %f \n", player1.bpm);
+        HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); // Timeout de 1 segundo em vez de infinito
+
+      }
       player1.samples_between_readings = 0;
     }
   }
   player1.samples_between_readings++;
+  
+  // Incrementa o índice e faz wrap-around
+  player1.index++;
+  if(player1.index >= 50) {
+    player1.index = 0;
+    player1.buffer_full = 1;
+  }
 }
 
 //Verifica a cada 10ms se a leitura está pronta
@@ -201,7 +226,22 @@ int main(void)
   MX_TIM1_Init();
   /* USER CODE BEGIN 2 */
 
-  HAL_TIM_Base_Start_IT(&htim1);
+  // Inicializa estruturas dos jogadores
+  player1.index = 0;
+  player1.buffer_full = 0;
+  player1.bpm = 0.0f;
+  player1.spo2 = 0.0f;
+  player1.samples_between_readings = 0;
+  
+  player2.index = 0;
+  player2.buffer_full = 0;
+  player2.bpm = 0.0f;
+  player2.spo2 = 0.0f;
+  player2.samples_between_readings = 0;
+
+  if(HAL_TIM_Base_Start_IT(&htim1) != HAL_OK) {
+    Error_Handler();
+  }
 
   //Select_I2C_Channel(0);
   MAX30100_Init();
@@ -217,7 +257,7 @@ int main(void)
     if(ready_to_read == 1){
       prototype_read_BPM();
       ready_to_read = 0;
-      HAL_UART_Transmit(&huart2, tx_buffer, len, HAL_MAX_DELAY);
+      HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); // Timeout de 1 segundo em vez de infinito
       
     }
     /* USER CODE END WHILE */
