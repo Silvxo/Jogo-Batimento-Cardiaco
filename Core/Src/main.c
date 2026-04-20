@@ -27,17 +27,18 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "stdio.h"
+#include <stdint.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
 typedef struct{
-  uint16_t buffer_IR[50];
-  uint16_t buffer_LED[50];
+  uint16_t buffer_IR[100];
+  uint16_t buffer_LED[100];
   uint8_t index;
   uint8_t buffer_full;
 
-  float bpm;
+  uint16_t bpm;
   float spo2;
 
   uint32_t samples_between_readings;
@@ -69,8 +70,13 @@ union myConfigMAX30100 {
 //Indica que a leitura do sensor está pronta
 volatile uint8_t ready_to_read = 0;
 uint8_t TIME_BETWEEN_READINGS = 10; //em ms
+uint16_t threshold = 25000;
+uint16_t aboveThreshold = 0;
 Player player1;
 Player player2;
+
+static uint32_t rolling_avg = 0;
+static uint8_t pulse_detected = 0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -100,9 +106,11 @@ HAL_StatusTypeDef MAX30100_Write(uint8_t reg, uint8_t data){
 
 void MAX30100_Init(){
   //if(MAX30100_Write(0x06, 0b01001011) != HAL_OK) return;
-  if(MAX30100_Write(0x06, 0x02) != HAL_OK) return;
+  MAX30100_Write(0x06, 0x40); 
+  HAL_Delay(10);
+  if(MAX30100_Write(0x06, 0x03) != HAL_OK) return;
   if(MAX30100_Write(0x09, 0x77) != HAL_OK) return;
-  if(MAX30100_Write(0x07, 0x01) != HAL_OK) return;
+  if(MAX30100_Write(0x07, 0x07) != HAL_OK) return;
 }
 
 void MAX30100_Read(){
@@ -117,69 +125,44 @@ void prototype_read_BPM(){
   uint8_t buffer[4];
   //Lê valor do IR diretamente do registrador 0x05
   HAL_StatusTypeDef status = HAL_I2C_Mem_Read(&hi2c1, (0x57 << 1), 0x05, I2C_MEMADD_SIZE_8BIT, buffer, 4, 100);
-  
+  int len = 0;
   if(status != HAL_OK) {
-    int len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "ERRO AO LER\n");
+    len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "ERRO AO LER\n");
     HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); // Timeout de 1 segundo em vez de infinito
 
     return; // Se falhar na leitura, sai da função
   }
-  // int len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "LEU \n");
-  // HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); // Timeout de 1 segundo em vez de infinito
-
   
   uint16_t ir_value = (buffer[0] << 8) | buffer[1];
   player1.buffer_IR[player1.index] = ir_value;
-  // len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "VALOR: %d \n", ir_value);
-  // HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); // Timeout de 1 segundo em vez de infinito
 
-  
-  //Somente para simplificar o processo de verificação de variação
-  uint8_t past_value;
-  uint8_t present_value;
-  uint8_t next_value;
-  if(player1.index == 0){
-    past_value = player1.buffer_IR[48];
-    present_value = player1.buffer_IR[49];
-    next_value = player1.buffer_IR[0];
-  } else if(player1.index == 1){
-    past_value = player1.buffer_IR[49];
-    present_value = player1.buffer_IR[0];
-    next_value = player1.buffer_IR[1];
-  } else{
-    uint8_t index = player1.index;
-    past_value = player1.buffer_IR[index-2];
-    present_value = player1.buffer_IR[index-1];
-    next_value = player1.buffer_IR[index];
+  if(ir_value < 15000){
+    return;
   }
 
-  uint8_t average = 0;
+  uint16_t average = 0;
+  uint16_t bufferSum = 0;
 
-  //Quando o valor tem um ponto de inversão, é considerado um pulso
-  if(past_value > present_value && present_value < next_value){
-  //Calcula média e verifica se é menor
-    for(uint8_t i = 0; i < 49; i++){
-          average += player1.buffer_IR[i];
-    }
-    average = average / 50;
-    if(present_value < average){
-      if(player1.samples_between_readings > 0) {
-        player1.bpm = 60000/(player1.samples_between_readings * TIME_BETWEEN_READINGS);
-        int len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "VALOR: %f \n", player1.bpm);
-        HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); // Timeout de 1 segundo em vez de infinito
+  rolling_avg = (rolling_avg * 0.95) + (ir_value * 0.05); // Filtro passa baixa
 
+  if (ir_value < (rolling_avg - 150) && !pulse_detected) { 
+      // Pulso detectado
+      uint16_t bpm = 60000 / (player1.samples_between_readings * TIME_BETWEEN_READINGS);
+      if(bpm > 35 && bpm < 120){
+        player1.bpm = bpm;
       }
       player1.samples_between_readings = 0;
-    }
+      pulse_detected = 1; 
+      len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "PULSO DETECTADO! -> ");
+      HAL_UART_Transmit(&huart2, tx_buffer, len, 100);
+  } 
+
+  if (ir_value > rolling_avg) {
+      pulse_detected = 0; // Reseta pro proximo batimento
   }
+
   player1.samples_between_readings++;
-  
-  // Incrementa o índice e faz wrap-around
-  player1.index++;
-  if(player1.index >= 50) {
-    player1.index = 0;
-    player1.buffer_full = 1;
-  }
+  player1.index = (player1.index + 1) % 100;
 }
 
 //Verifica a cada 10ms se a leitura está pronta
@@ -245,6 +228,7 @@ int main(void)
 
   //Select_I2C_Channel(0);
   MAX30100_Init();
+  uint8_t count = 0;
 
   /* USER CODE END 2 */
 
@@ -252,14 +236,18 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    int len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "BPM:%d\n", player1.bpm);
-
     if(ready_to_read == 1){
       prototype_read_BPM();
       ready_to_read = 0;
-      HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); // Timeout de 1 segundo em vez de infinito
-      
+      count++;
     }
+    if(count >= 100){
+      int len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "BPM: %d \n", player1.bpm);
+      HAL_UART_Transmit(&huart2, tx_buffer, len, 100);
+      count = 0;
+    }
+
+
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
