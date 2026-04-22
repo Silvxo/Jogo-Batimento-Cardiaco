@@ -121,6 +121,24 @@ void MAX30100_Read(){
   //Falta processar o valor do sensor
 }
 
+void prototype_read_SPO2(){
+  uint8_t buffer[4];
+  //Lê valor do LED diretamente do registrador 0x05
+  HAL_StatusTypeDef status = HAL_I2C_Mem_Read(&hi2c1, (0x57 << 1), 0x05, I2C_MEMADD_SIZE_8BIT, buffer, 4, 100);
+  int len = 0;
+  if(status != HAL_OK) {
+    len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "ERRO AO LER\n");
+    HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); // Timeout de 1 segundo em vez de infinito
+
+    return; // Se falhar na leitura, sai da função
+  }
+  
+  uint16_t led_value = (buffer[2] << 8) | buffer[3];
+  player1.buffer_IR[player1.index] = led_value;
+  
+
+}
+
 void prototype_read_BPM(){
   uint8_t buffer[4];
   //Lê valor do IR diretamente do registrador 0x05
@@ -226,7 +244,7 @@ int main(void)
     Error_Handler();
   }
 
-  //Select_I2C_Channel(0);
+  Select_I2C_Channel(1);
   MAX30100_Init();
   uint8_t count = 0;
 
