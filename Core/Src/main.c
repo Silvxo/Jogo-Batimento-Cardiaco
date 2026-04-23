@@ -21,6 +21,7 @@
 #include "i2c.h"
 #include "spi.h"
 #include "stm32f3xx.h"
+#include "stm32f3xx_hal.h"
 #include "stm32f3xx_hal_gpio.h"
 #include "stm32f3xx_hal_tim.h"
 #include "tim.h"
@@ -31,6 +32,7 @@
 /* USER CODE BEGIN Includes */
 #include "stdio.h"
 #include <stdint.h>
+#include "stdlib.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -89,9 +91,11 @@ volatile uint8_t ready_to_read = 0;
 volatile uint8_t timer_tick = 0;
 volatile uint8_t servo_tick = 0;
 uint8_t timer = 0;
-uint8_t match_duration_seconds = 15;
+uint8_t match_duration_seconds = 30;
 uint8_t ticks_counter = 0;
 uint8_t servo_ticks_counter = 0;
+
+uint8_t gpio_pin_state = GPIO_PIN_RESET;
 
 uint8_t TIME_BETWEEN_READINGS = 10; //em ms
 uint16_t threshold = 25000;
@@ -264,13 +268,12 @@ void initialize_sensors(){
   MAX30100_Init();
 }
 
-void detect_pulse(){
-  //Check for pulse in both sensors
-}
-
 void move_servo(uint8_t angle){
   if(angle > 179) angle = 179;
-  
+  int correctedAngle = (angle - 30);
+  if(correctedAngle < 0){
+    angle = 170 - abs(correctedAngle);
+  }
   // 2. Map 0-179 to CCR values 50-100
   // min_ccr + (angle * (max_ccr - min_ccr) / 180)
   // Using 50 as the range (100 - 50)
@@ -300,16 +303,36 @@ void update_servo_position(uint16_t bpm1, uint16_t bpm2){
     int len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "SERVO UPDATE\n");
     HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); 
 
-    len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "Player 1: %d\n", player1.bpm);
-    HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); 
-
     move_servo(servoPositions.current_position);
   }
+}
+
+void servo_display_winner(){
+  if(servoPositions.current_position >= 90){
+    servoPositions.current_position = servoPositions.MAXIMUM;
+  } else {
+    servoPositions.current_position = servoPositions.MINIMUM;
+  }
+  move_servo(servoPositions.current_position);
 }
 
 void reset_servo(){
   move_servo(servoPositions.RESET);
   servoPositions.current_position = servoPositions.RESET;
+}
+
+uint8_t check_rising_button(){
+    uint8_t current_state = HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin);
+    
+    // Check if edge is rising (low to high)
+    if (current_state == GPIO_PIN_SET && last_state == GPIO_PIN_RESET) {
+        // Rising edge detected
+        last_state = current_state;
+        return 1;
+    }
+    
+    last_state = current_state;
+    return 0;
 }
 
 void set_timer(uint8_t match_duration_seconds){
@@ -420,12 +443,11 @@ int main(void)
       case AWAIT_INICIALIZATION:
         //  Display in waiting screen
         //  Await button input
-        // if(HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin)){
-        //   state = RESET_INPUTS_AND_OUTPUTS;
-        // }
-        len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "AWAIT\n");
-        HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); 
-        currentState = RESET_INPUTS_AND_OUTPUTS;
+        if(HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin) == 0){
+          len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "AWAIT\n");
+          HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); 
+          currentState = RESET_INPUTS_AND_OUTPUTS;
+        }
         break;
       case RESET_INPUTS_AND_OUTPUTS:
         // Reset servo position
@@ -453,6 +475,11 @@ int main(void)
         }
         break;
       case GAME_FINISHED:
+          servo_display_winner();
+          if(HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin) == 0){
+            currentState = AWAIT_INICIALIZATION;
+            HAL_Delay(100);
+          }
 
         break;
     }
