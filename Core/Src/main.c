@@ -20,6 +20,7 @@
 #include "main.h"
 #include "i2c.h"
 #include "spi.h"
+#include "stm32f3xx_hal_tim.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
@@ -158,9 +159,6 @@ void prototype_read_BPM(){
     return;
   }
 
-  uint16_t average = 0;
-  uint16_t bufferSum = 0;
-
   rolling_avg = (rolling_avg * 0.95) + (ir_value * 0.05); // Filtro passa baixa
 
   if (ir_value < (rolling_avg - 150) && !pulse_detected) { 
@@ -181,6 +179,19 @@ void prototype_read_BPM(){
 
   player1.samples_between_readings++;
   player1.index = (player1.index + 1) % 100;
+}
+
+
+void prototype_move_servo(uint8_t angle){
+  if(angle > 179) angle = 179;
+  
+  // 2. Map 0-179 to CCR values 50-100
+  // min_ccr + (angle * (max_ccr - min_ccr) / 180)
+  // Using 50 as the range (100 - 50)
+  uint32_t ccr_val = 50 + ((uint32_t)angle * 50 / 180);
+
+  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_3, ccr_val);
+
 }
 
 //Verifica a cada 10ms se a leitura está pronta
@@ -225,6 +236,7 @@ int main(void)
   MX_I2C1_Init();
   MX_SPI1_Init();
   MX_TIM1_Init();
+  MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
 
   // Inicializa estruturas dos jogadores
@@ -244,9 +256,12 @@ int main(void)
     Error_Handler();
   }
 
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_3);
+
   Select_I2C_Channel(1);
   MAX30100_Init();
   uint8_t count = 0;
+  uint8_t angle = 10;
 
   /* USER CODE END 2 */
 
@@ -263,6 +278,8 @@ int main(void)
       int len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "BPM: %d \n", player1.bpm);
       HAL_UART_Transmit(&huart2, tx_buffer, len, 100);
       count = 0;
+      angle = 178;
+      prototype_move_servo(angle);
     }
 
 
