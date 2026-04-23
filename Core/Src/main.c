@@ -39,7 +39,7 @@ typedef struct{
   uint16_t buffer_IR[100];
   uint16_t buffer_LED[100];
   uint8_t index;
-  uint8_t buffer_full;
+  uint8_t detected_pulse;
 
   uint16_t bpm;
   float spo2;
@@ -62,6 +62,13 @@ enum states {
   RUN_GAME,
   GAME_FINISHED
 };
+
+typedef struct {
+  uint8_t RESET;
+  uint8_t MINIMUM;
+  uint8_t MAXIMUM;
+  uint8_t current_position;
+} ServoPositions;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -79,13 +86,23 @@ enum states {
 /* USER CODE BEGIN PV */
 //Indica que a leitura do sensor está pronta
 volatile uint8_t ready_to_read = 0;
+volatile uint8_t timer_tick = 0;
+volatile uint8_t servo_tick = 0;
+uint8_t timer = 0;
+uint8_t match_duration_seconds = 15;
+uint8_t ticks_counter = 0;
+uint8_t servo_ticks_counter = 0;
+
 uint8_t TIME_BETWEEN_READINGS = 10; //em ms
 uint16_t threshold = 25000;
 uint16_t aboveThreshold = 0;
 Player player1;
 Player player2;
 
-enum currentState = BEGIN;
+ServoPositions servoPositions;
+uint8_t degrees_per_move = 15;
+
+enum states currentState = AWAIT_INICIALIZATION;
 
 static uint32_t rolling_avg = 0;
 static uint8_t pulse_detected = 0;
@@ -147,7 +164,7 @@ void prototype_read_SPO2(){
   
   uint16_t led_value = (buffer[2] << 8) | buffer[3];
   player1.buffer_IR[player1.index] = led_value;
-  
+
 
 }
 
@@ -192,8 +209,66 @@ void prototype_read_BPM(){
   player1.index = (player1.index + 1) % 100;
 }
 
+void read_BPM(Player *player){
+  uint8_t buffer[4];
+  //Lê valor do IR diretamente do registrador 0x05
+  HAL_StatusTypeDef status = HAL_I2C_Mem_Read(&hi2c1, (0x57 << 1), 0x05, I2C_MEMADD_SIZE_8BIT, buffer, 4, 100);
+  if(status != HAL_OK) {
+    player->bpm = 0;
+    return; // Se falhar na leitura, sai da função
+  }
+  
+  uint16_t ir_value = (buffer[0] << 8) | buffer[1];
+  player->buffer_IR[player->index] = ir_value;
 
-void prototype_move_servo(uint8_t angle){
+  if(ir_value < 15000){
+    player->bpm = 0;
+    return;
+  }
+
+  // Filtro passa baixa
+  rolling_avg = (rolling_avg * 0.95) + (ir_value * 0.05);
+
+  if (ir_value < (rolling_avg - 150) && !player->detected_pulse) { 
+      // Pulso detectado
+      uint16_t bpm = 60000 / (player->samples_between_readings * TIME_BETWEEN_READINGS);
+      if(bpm > 35 && bpm < 120){
+        player->bpm = bpm;
+      }
+      player->samples_between_readings = 0;
+      player->detected_pulse = 1;
+  } 
+
+  if (ir_value > rolling_avg) {
+      player->detected_pulse = 0; // Reseta pro proximo batimento
+  }
+
+  player->samples_between_readings++;
+  player->index = (player1.index + 1) % 100;
+}
+
+void read_BPM_from_players(){
+  if(ready_to_read == 1){
+    Select_I2C_Channel(0);
+    read_BPM(&player1);
+    Select_I2C_Channel(1);
+    read_BPM(&player2);
+    ready_to_read = 0;
+  }
+}
+
+void initialize_sensors(){
+  Select_I2C_Channel(0);
+  MAX30100_Init();
+  Select_I2C_Channel(1);
+  MAX30100_Init();
+}
+
+void detect_pulse(){
+  //Check for pulse in both sensors
+}
+
+void move_servo(uint8_t angle){
   if(angle > 179) angle = 179;
   
   // 2. Map 0-179 to CCR values 50-100
@@ -202,13 +277,69 @@ void prototype_move_servo(uint8_t angle){
   uint32_t ccr_val = 50 + ((uint32_t)angle * 50 / 180);
 
   __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_3, ccr_val);
+}
 
+void update_servo_position(uint16_t bpm1, uint16_t bpm2){
+  if(servo_tick == 1){
+    servo_ticks_counter++;
+    servo_tick = 0;
+  }
+  if(servo_ticks_counter == 100){
+    servo_ticks_counter = 0;
+
+    if(bpm1 > bpm2){
+      servoPositions.current_position += degrees_per_move;
+    } else if(bpm1 < bpm2){
+      servoPositions.current_position -= degrees_per_move;
+    }
+    if(servoPositions.current_position < servoPositions.MINIMUM)
+      servoPositions.current_position = servoPositions.MINIMUM;
+    if(servoPositions.current_position > servoPositions.MAXIMUM)
+      servoPositions.current_position = servoPositions.MAXIMUM;
+
+    int len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "SERVO UPDATE\n");
+    HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); 
+
+    len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "Player 1: %d\n", player1.bpm);
+    HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); 
+
+    move_servo(servoPositions.current_position);
+  }
+}
+
+void reset_servo(){
+  move_servo(servoPositions.RESET);
+  servoPositions.current_position = servoPositions.RESET;
+}
+
+void set_timer(uint8_t match_duration_seconds){
+  timer = match_duration_seconds;
+}
+
+void update_timer(){
+  if(timer_tick == 1){
+    ticks_counter++;
+    timer_tick = 0;
+  }
+  if(ticks_counter >= 100){
+    timer--;
+    ticks_counter = 0;
+  }
+}
+
+uint8_t is_match_finished(){
+  if(timer == 0){
+    return 1;
+  }
+  return 0;
 }
 
 //Verifica a cada 10ms se a leitura está pronta
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
     if (htim->Instance == TIM1) {
         ready_to_read = 1;
+        timer_tick = 1;
+        servo_tick = 1;
     }
 }
 
@@ -252,27 +383,32 @@ int main(void)
 
   // Inicializa estruturas dos jogadores
   player1.index = 0;
-  player1.buffer_full = 0;
   player1.bpm = 0.0f;
   player1.spo2 = 0.0f;
   player1.samples_between_readings = 0;
+  player1.detected_pulse = 0;
   
   player2.index = 0;
-  player2.buffer_full = 0;
   player2.bpm = 0.0f;
   player2.spo2 = 0.0f;
   player2.samples_between_readings = 0;
+  player2.detected_pulse = 0;
+
+  servoPositions.RESET = 89;
+  servoPositions.MAXIMUM = 175;
+  servoPositions.MINIMUM = 5;
+
 
   if(HAL_TIM_Base_Start_IT(&htim1) != HAL_OK) {
     Error_Handler();
   }
 
-  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_3);
+  if(HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_3) != HAL_OK){
+    Error_Handler();
+  }
 
-  Select_I2C_Channel(1);
-  MAX30100_Init();
-  uint8_t count = 0;
-  uint8_t angle = 10;
+  initialize_sensors();
+  int len = 0;
 
   /* USER CODE END 2 */
 
@@ -280,45 +416,46 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-
-    switch (state) {
+    switch (currentState) {
       case AWAIT_INICIALIZATION:
         //  Display in waiting screen
         //  Await button input
-        if(HAL_GPIO_ReadPin(&B1_GPIO_Port, B1_Pin)){
-          state = RESET_INPUTS_AND_OUTPUTS;
-        }
+        // if(HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin)){
+        //   state = RESET_INPUTS_AND_OUTPUTS;
+        // }
+        len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "AWAIT\n");
+        HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); 
+        currentState = RESET_INPUTS_AND_OUTPUTS;
         break;
       case RESET_INPUTS_AND_OUTPUTS:
         // Reset servo position
+        reset_servo();
         // Wait to detect pulse
         // Display preparation and pulse detection
         // if(player1.has_detected_pulse == 1 && player1.has_detected_pulse == 1) setTimer(); state = RUN_GAME
+        set_timer(match_duration_seconds);
+        len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "RESET\n");
+        HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); 
+        currentState = RUN_GAME;
         break;
       case RUN_GAME:
-        // 1 - Update timer 
+        // 1 - Update timer
+        update_timer();
         // 2 - Read BPM from both players
+        read_BPM_from_players();
         // 3 - Calculate points and position
         // 4 - Update display and servo
-        // 5 - if(timer == 0) state == GAME_FINISHED
+        //update_servo_position(player1.bpm, player2.bpm);
+        update_servo_position(player1.bpm, player2.bpm);
+        // Update display
+        if(is_match_finished() == 1){
+          currentState = GAME_FINISHED;
+        }
         break;
       case GAME_FINISHED:
 
         break;
     }
-    if(ready_to_read == 1){
-      prototype_read_BPM();
-      ready_to_read = 0;
-      count++;
-    }
-    if(count >= 100){
-      int len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "BPM: %d \n", player1.bpm);
-      HAL_UART_Transmit(&huart2, tx_buffer, len, 100);
-      count = 0;
-      angle = 178;
-      prototype_move_servo(angle);
-    }
-
 
     /* USER CODE END WHILE */
 
