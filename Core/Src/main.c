@@ -20,6 +20,8 @@
 #include "main.h"
 #include "i2c.h"
 #include "spi.h"
+#include "stm32f3xx.h"
+#include "stm32f3xx_hal_gpio.h"
 #include "stm32f3xx_hal_tim.h"
 #include "tim.h"
 #include "usart.h"
@@ -53,6 +55,13 @@ union myConfigMAX30100 {
     uint8_t reserved : 8;
   };
 };
+
+enum states { 
+  AWAIT_INICIALIZATION = 0,
+  RESET_INPUTS_AND_OUTPUTS,
+  RUN_GAME,
+  GAME_FINISHED
+};
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -75,6 +84,8 @@ uint16_t threshold = 25000;
 uint16_t aboveThreshold = 0;
 Player player1;
 Player player2;
+
+enum currentState = BEGIN;
 
 static uint32_t rolling_avg = 0;
 static uint8_t pulse_detected = 0;
@@ -269,6 +280,32 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+
+    switch (state) {
+      case AWAIT_INICIALIZATION:
+        //  Display in waiting screen
+        //  Await button input
+        if(HAL_GPIO_ReadPin(&B1_GPIO_Port, B1_Pin)){
+          state = RESET_INPUTS_AND_OUTPUTS;
+        }
+        break;
+      case RESET_INPUTS_AND_OUTPUTS:
+        // Reset servo position
+        // Wait to detect pulse
+        // Display preparation and pulse detection
+        // if(player1.has_detected_pulse == 1 && player1.has_detected_pulse == 1) setTimer(); state = RUN_GAME
+        break;
+      case RUN_GAME:
+        // 1 - Update timer 
+        // 2 - Read BPM from both players
+        // 3 - Calculate points and position
+        // 4 - Update display and servo
+        // 5 - if(timer == 0) state == GAME_FINISHED
+        break;
+      case GAME_FINISHED:
+
+        break;
+    }
     if(ready_to_read == 1){
       prototype_read_BPM();
       ready_to_read = 0;
