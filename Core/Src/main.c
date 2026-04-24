@@ -105,7 +105,7 @@ Player player1;
 Player player2;
 
 ServoPositions servoPositions;
-uint8_t degrees_per_move = 15;
+uint8_t degrees_per_move = 4;
 
 enum states currentState = AWAIT_INICIALIZATION;
 
@@ -146,72 +146,6 @@ void MAX30100_Init(){
   if(MAX30100_Write(0x07, 0x07) != HAL_OK) return;
 }
 
-void MAX30100_Read(){
-  uint8_t buffer[4];
-  HAL_I2C_Mem_Read(&hi2c1, (0x57 << 1), 0x05, I2C_MEMADD_SIZE_8BIT, buffer, 4, 100);
-  // uint16_t ir_value = (buffer[0] << 8) | buffer[1];
-  // uint16_t led_value = (buffer[2] << 8) | buffer[3];
-  //Falta processar o valor do sensor
-}
-
-void prototype_read_SPO2(){
-  uint8_t buffer[4];
-  //Lê valor do LED diretamente do registrador 0x05
-  HAL_StatusTypeDef status = HAL_I2C_Mem_Read(&hi2c1, (0x57 << 1), 0x05, I2C_MEMADD_SIZE_8BIT, buffer, 4, 100);
-  int len = 0;
-  if(status != HAL_OK) {
-    len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "ERRO AO LER\n");
-    HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); // Timeout de 1 segundo em vez de infinito
-
-    return; // Se falhar na leitura, sai da função
-  }
-  
-  uint16_t led_value = (buffer[2] << 8) | buffer[3];
-  player1.buffer_IR[player1.index] = led_value;
-
-
-}
-
-void prototype_read_BPM(){
-  uint8_t buffer[4];
-  //Lê valor do IR diretamente do registrador 0x05
-  HAL_StatusTypeDef status = HAL_I2C_Mem_Read(&hi2c1, (0x57 << 1), 0x05, I2C_MEMADD_SIZE_8BIT, buffer, 4, 100);
-  int len = 0;
-  if(status != HAL_OK) {
-    len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "ERRO AO LER\n");
-    HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); // Timeout de 1 segundo em vez de infinito
-
-    return; // Se falhar na leitura, sai da função
-  }
-  
-  uint16_t ir_value = (buffer[0] << 8) | buffer[1];
-  player1.buffer_IR[player1.index] = ir_value;
-
-  if(ir_value < 15000){
-    return;
-  }
-
-  uint8_t rolling_avg = (rolling_avg * 0.95) + (ir_value * 0.05); // Filtro passa baixa
-
-  if (ir_value < (rolling_avg - 150) && !pulse_detected) { 
-      // Pulso detectado
-      uint16_t bpm = 60000 / (player1.samples_between_readings * TIME_BETWEEN_READINGS);
-      if(bpm > 35 && bpm < 120){
-        player1.bpm = bpm;
-      }
-      player1.samples_between_readings = 0;
-      pulse_detected = 1; 
-      len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "PULSO DETECTADO! -> ");
-      HAL_UART_Transmit(&huart2, tx_buffer, len, 100);
-  } 
-
-  if (ir_value > rolling_avg) {
-      pulse_detected = 0; // Reseta pro proximo batimento
-  }
-
-  player1.samples_between_readings++;
-  player1.index = (player1.index + 1) % 100;
-}
 
 void read_BPM(Player *player){
   uint8_t buffer[4];
@@ -270,13 +204,7 @@ void initialize_sensors(){
 
 void move_servo(uint8_t angle){
   if(angle > 179) angle = 179;
-  // int correctedAngle = (angle - 30);
-  // if(correctedAngle < 0){
-  //   angle = 170 - abs(correctedAngle);
-  // }
-  // 2. Map 0-179 to CCR values 50-100
-  // min_ccr + (angle * (max_ccr - min_ccr) / 180)
-  // Using 50 as the range (100 - 50)
+
   uint32_t ccr_val = 50 + ((uint32_t)angle * 50 / 180);
 
   __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_3, ccr_val);
@@ -313,6 +241,7 @@ void update_servo_position(uint16_t bpm1, uint16_t bpm2){
 }
 
 void servo_display_winner(){
+  //Se todos forem 0, o lado esquerdo ganha
   if(servoPositions.current_position >= 90){
     servoPositions.current_position = servoPositions.MAXIMUM;
   } else {
@@ -326,19 +255,6 @@ void reset_servo(){
   servoPositions.current_position = servoPositions.RESET;
 }
 
-uint8_t check_rising_button(){
-    uint8_t current_state = HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin);
-    
-    // Check if edge is rising (low to high)
-    if (current_state == GPIO_PIN_SET && button_last_state == GPIO_PIN_RESET) {
-        // Rising edge detected
-        button_last_state = current_state;
-        return 0;
-    }
-    
-    button_last_state = current_state;
-    return 1;
-}
 
 void set_timer(uint8_t match_duration_seconds){
   timer = match_duration_seconds;
