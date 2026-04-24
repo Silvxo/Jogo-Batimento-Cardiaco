@@ -42,6 +42,7 @@ typedef struct{
   uint16_t buffer_LED[100];
   uint8_t index;
   uint8_t detected_pulse;
+  uint32_t rolling_avg;
 
   uint16_t bpm;
   float spo2;
@@ -95,7 +96,7 @@ uint8_t match_duration_seconds = 30;
 uint8_t ticks_counter = 0;
 uint8_t servo_ticks_counter = 0;
 
-uint8_t gpio_pin_state = GPIO_PIN_RESET;
+uint8_t button_last_state = GPIO_PIN_RESET;
 
 uint8_t TIME_BETWEEN_READINGS = 10; //em ms
 uint16_t threshold = 25000;
@@ -108,7 +109,6 @@ uint8_t degrees_per_move = 15;
 
 enum states currentState = AWAIT_INICIALIZATION;
 
-static uint32_t rolling_avg = 0;
 static uint8_t pulse_detected = 0;
 /* USER CODE END PV */
 
@@ -191,7 +191,7 @@ void prototype_read_BPM(){
     return;
   }
 
-  rolling_avg = (rolling_avg * 0.95) + (ir_value * 0.05); // Filtro passa baixa
+  uint8_t rolling_avg = (rolling_avg * 0.95) + (ir_value * 0.05); // Filtro passa baixa
 
   if (ir_value < (rolling_avg - 150) && !pulse_detected) { 
       // Pulso detectado
@@ -231,9 +231,9 @@ void read_BPM(Player *player){
   }
 
   // Filtro passa baixa
-  rolling_avg = (rolling_avg * 0.95) + (ir_value * 0.05);
+  player->rolling_avg = (player->rolling_avg * 0.95) + (ir_value * 0.05);
 
-  if (ir_value < (rolling_avg - 150) && !player->detected_pulse) { 
+  if (ir_value < (player->rolling_avg - 150) && !player->detected_pulse) { 
       // Pulso detectado
       uint16_t bpm = 60000 / (player->samples_between_readings * TIME_BETWEEN_READINGS);
       if(bpm > 35 && bpm < 120){
@@ -243,7 +243,7 @@ void read_BPM(Player *player){
       player->detected_pulse = 1;
   } 
 
-  if (ir_value > rolling_avg) {
+  if (ir_value > player->rolling_avg) {
       player->detected_pulse = 0; // Reseta pro proximo batimento
   }
 
@@ -270,10 +270,10 @@ void initialize_sensors(){
 
 void move_servo(uint8_t angle){
   if(angle > 179) angle = 179;
-  int correctedAngle = (angle - 30);
-  if(correctedAngle < 0){
-    angle = 170 - abs(correctedAngle);
-  }
+  // int correctedAngle = (angle - 30);
+  // if(correctedAngle < 0){
+  //   angle = 170 - abs(correctedAngle);
+  // }
   // 2. Map 0-179 to CCR values 50-100
   // min_ccr + (angle * (max_ccr - min_ccr) / 180)
   // Using 50 as the range (100 - 50)
@@ -300,7 +300,12 @@ void update_servo_position(uint16_t bpm1, uint16_t bpm2){
     if(servoPositions.current_position > servoPositions.MAXIMUM)
       servoPositions.current_position = servoPositions.MAXIMUM;
 
-    int len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "SERVO UPDATE\n");
+    int len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "Player 1: %d\n", player1.bpm);
+    HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); 
+    len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "Player 2: %d\n", player2.bpm);
+    HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); 
+
+    len = snprintf((char*)tx_buffer, sizeof(tx_buffer), "SERVO UPDATE\n");
     HAL_UART_Transmit(&huart2, tx_buffer, len, 1000); 
 
     move_servo(servoPositions.current_position);
@@ -325,14 +330,14 @@ uint8_t check_rising_button(){
     uint8_t current_state = HAL_GPIO_ReadPin(B1_GPIO_Port, B1_Pin);
     
     // Check if edge is rising (low to high)
-    if (current_state == GPIO_PIN_SET && last_state == GPIO_PIN_RESET) {
+    if (current_state == GPIO_PIN_SET && button_last_state == GPIO_PIN_RESET) {
         // Rising edge detected
-        last_state = current_state;
-        return 1;
+        button_last_state = current_state;
+        return 0;
     }
     
-    last_state = current_state;
-    return 0;
+    button_last_state = current_state;
+    return 1;
 }
 
 void set_timer(uint8_t match_duration_seconds){
@@ -410,12 +415,14 @@ int main(void)
   player1.spo2 = 0.0f;
   player1.samples_between_readings = 0;
   player1.detected_pulse = 0;
+  player1.rolling_avg = 0;
   
   player2.index = 0;
   player2.bpm = 0.0f;
   player2.spo2 = 0.0f;
   player2.samples_between_readings = 0;
   player2.detected_pulse = 0;
+  player2.rolling_avg = 0;
 
   servoPositions.RESET = 89;
   servoPositions.MAXIMUM = 175;
