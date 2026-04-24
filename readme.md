@@ -1,48 +1,49 @@
-Jogo de Duelo de Batimentos Cardíacos (STM32)
+# Jogo de Duelo de Batimentos Cardíacos (STM32)
 
 Este projeto implementa um jogo competitivo para dois jogadores baseado na frequência cardíaca (BPM). O objetivo é manter o BPM mais alto que o do adversário para mover um servo motor em sua direção até o fim do tempo.
-🚀 Funcionalidades
 
-    Leitura Dupla de Sensores: Utiliza dois sensores MAX30100 via multiplexador I2C para medir o BPM de dois jogadores simultaneamente.
+## 🚀 Funcionalidades
 
-    Feedback em Tempo Real: Um Servo Motor atua como um "cabo de guerra" físico, movendo-se para a esquerda ou direita dependendo de quem está com o batimento mais alto.
+- Leitura Dupla de Sensores: Utiliza dois sensores MAX30100 via multiplexador I2C para medir o BPM de dois jogadores simultaneamente.
 
-    Sistema de Estados: Gerencia o fluxo do jogo desde a inicialização, contagem de tempo (30 segundos por partida) até a declaração do vencedor.
+- Feedback em Tempo Real: Um Servo Motor atua como um "cabo de guerra" físico, movendo-se para a esquerda ou direita dependendo de quem está com o batimento mais alto.
 
-    Comunicação Serial: Envia dados de BPM e status do jogo via UART para depuração e monitoramento.
+- Sistema de Estados: Gerencia o fluxo do jogo desde a inicialização, contagem de tempo (30 segundos por partida) até a declaração do vencedor.
 
-🛠️ Hardware Utilizado
+- Comunicação Serial: Envia dados de BPM e status do jogo via UART para depuração e monitoramento.
 
-    Microcontrolador: STM32F3xx (Ex: STM32F303).
+## 🛠️ Hardware Utilizado
 
-    Sensores de Oximetria: 2x MAX30100.
+- Microcontrolador: STM32F3xx (Ex: STM32F303).
 
-    Multiplexador I2C: Para alternar a leitura entre os dois sensores (endereços iguais).
+- Sensores de Oximetria: 2x MAX30100.
 
-    Atuador: 1x Servo Motor (Controlado por PWM no TIM3).
+- Multiplexador I2C: Para alternar a leitura entre os dois sensores (endereços iguais).
 
-    Input: Botão de usuário para iniciar a partida.
+- Atuador: 1x Servo Motor (Controlado por PWM no TIM3).
 
-⚙️ Estrutura de Estados
+- Input: Botão de usuário para iniciar a partida.
+
+## ⚙️ Estrutura de Estados
 
 O software opera baseado na seguinte lógica:
 
-    AWAIT_INICIALIZATION: Aguarda o clique no botão para começar.
+- AWAIT_INICIALIZATION: Aguarda o clique no botão para começar.
 
-    RESET_INPUTS_AND_OUTPUTS: Centraliza o servo e reseta as variáveis de jogo.
+- RESET_INPUTS_AND_OUTPUTS: Centraliza o servo e reseta as variáveis de jogo.
 
-    RUN_GAME: Lê os sensores a cada 10ms, calcula o BPM e move o servo proporcionalmente.
+- RUN_GAME: Lê os sensores a cada 10ms, calcula o BPM e move o servo proporcionalmente.
 
-    GAME_FINISHED: O tempo acaba, o servo aponta para o vencedor e aguarda reset.
+- GAME_FINISHED: O tempo acaba, o servo aponta para o vencedor e aguarda reset.
 
-💻 Como Rodar
+## 💻 Como Rodar
 
-    Clone este repositório em seu workspace do STM32CubeIDE.
+- Clone este repositório em seu workspace do STM32CubeIDE.
 
-    Certifique-se de que as bibliotecas HAL para I2C, UART, TIM e GPIO estejam configuradas.
+- Certifique-se de que as bibliotecas HAL para I2C, UART, TIM e GPIO estejam configuradas.
 
-    Compile e faça o flash para a placa STM32.
+- Compile e faça o flash para a placa STM32.
 
-    Abra um terminal serial (Baud rate configurado na UART2) para ver os logs de BPM.
+- Abra um terminal serial (Baud rate configurado na UART2) para ver os logs de BPM.
 
 Nota: Este projeto utiliza interrupções de Timer (TIM1) para garantir a precisão da amostragem dos sensores de batimento cardíaco.
